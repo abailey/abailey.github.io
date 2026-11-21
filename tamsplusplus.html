@@ -1,0 +1,1592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GTimeParted — Daily Schedule Partition Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-app: #e8eaed;
+            --bg-panel: #f6f7f9;
+            --bg-surface: #ffffff;
+            --border-chrome: #b8bfc8;
+            --border-subtle: #d4d8df;
+            --text-primary: #1c2026;
+            --text-secondary: #4e5663;
+            --accent-blue: #2b6cb0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-app);
+            color: var(--text-primary);
+            user-select: none;
+            overflow-x: hidden;
+        }
+
+        .font-mono-tech {
+            font-family: 'JetBrains Mono', monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* GParted Unallocated Diagonal Hatch Pattern */
+        .unallocated-hatch {
+            background-color: #d6dadf;
+            background-image: repeating-linear-gradient(
+                -45deg,
+                #cbd0d6,
+                #cbd0d6 6px,
+                #dfe3e8 6px,
+                #dfe3e8 12px
+            );
+        }
+
+        /* GParted Partition Block Styling */
+        .partition-block {
+            transition: box-shadow 0.12s ease, filter 0.12s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .partition-block:hover {
+            filter: brightness(0.98);
+        }
+
+        .partition-selected {
+            box-shadow: inset 0 0 0 2px #111827, 0 0 0 2px rgba(37, 99, 235, 0.55) !important;
+            z-index: 20 !important;
+        }
+
+        /* Resize Handles between/around segments */
+        .resize-handle {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 10px;
+            cursor: col-resize;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform: translateX(-50%);
+        }
+
+        .resize-handle::after {
+            content: '';
+            width: 3px;
+            height: 24px;
+            background-color: rgba(17, 24, 39, 0.35);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s, background-color 0.15s;
+        }
+
+        .resize-handle:hover::after,
+        .resize-handle.active::after {
+            opacity: 1;
+            background-color: #2563eb;
+            width: 4px;
+            height: 32px;
+        }
+
+        /* Classic GTK / GParted Toolbar Button */
+        .gtk-btn {
+            background: linear-gradient(to bottom, #ffffff 0%, #eef0f3 100%);
+            border: 1px solid #aeb6c2;
+            box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
+            transition: all 0.1s ease;
+        }
+
+        .gtk-btn:hover:not(:disabled) {
+            background: linear-gradient(to bottom, #ffffff 0%, #e2e6ec 100%);
+            border-color: #8b95a5;
+        }
+
+        .gtk-btn:active:not(:disabled),
+        .gtk-btn.active {
+            background: #dce3ed;
+            border-color: #3b82f6;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+        }
+
+        .gtk-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        /* Split Mode Cursor on Timeline */
+        .split-mode-cursor {
+            cursor: crosshair !important;
+        }
+
+        /* Custom Scrollbar for Table */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #eef0f3;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #b8bfc8;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #949eab;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col text-sm">
+
+    <!-- Top Application Window Header (GTK/GParted Style) -->
+    <header class="bg-[#2c333d] text-white px-3 py-1.5 flex items-center justify-between border-b border-black/30 shadow-sm">
+        <div class="flex items-center gap-2.5">
+            <div class="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-inner border border-white/20">
+                <i class="fa-solid fa-hard-drive text-xs text-white"></i>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <span class="font-semibold tracking-tight text-sm">/dev/day0 — GTimeParted</span>
+                <span class="text-xs text-gray-300 hidden sm:inline">Daily Schedule Partition Editor</span>
+            </div>
+        </div>
+        <div class="flex items-center gap-3 text-xs">
+            <div class="hidden md:flex items-center gap-1.5 bg-black/25 px-2.5 py-1 rounded border border-white/10">
+                <span class="text-gray-400">Window:</span>
+                <select id="dayWindowSelect" class="bg-transparent text-white font-mono-tech focus:outline-none cursor-pointer">
+                    <option value="0-1440" class="text-black">00:00 – 24:00 (24h Full Day)</option>
+                    <option value="360-1440" class="text-black">06:00 – 24:00 (18h Waking Day)</option>
+                    <option value="480-1140" class="text-black">08:00 – 19:00 (11h Workday)</option>
+                </select>
+            </div>
+            <span id="liveClock" class="font-mono-tech text-gray-300 bg-black/20 px-2 py-0.5 rounded">00:00</span>
+        </div>
+    </header>
+
+    <!-- Classic Menu Bar -->
+    <nav class="bg-[#f0f2f5] border-b border-[#c5cbd3] px-3 py-1 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-700">
+        <div class="flex items-center gap-4">
+            <div class="relative group">
+                <button class="hover:text-black font-medium py-0.5 px-1.5 rounded hover:bg-black/5">Schedule</button>
+                <div class="hidden group-hover:block absolute left-0 top-full w-48 bg-white border border-gray-300 shadow-lg rounded z-50 py-1">
+                    <button onclick="loadSampleDay()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between">
+                        <span>Load Sample Day</span><i class="fa-solid fa-rotate text-[10px]"></i>
+                    </button>
+                    <button onclick="clearAllPartitions()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between">
+                        <span>Wipe Partition Table</span><i class="fa-solid fa-eraser text-[10px]"></i>
+                    </button>
+                    <div class="border-t border-gray-200 my-1"></div>
+                    <button onclick="openExportModal()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between">
+                        <span>Export Schedule...</span><span class="text-[10px] opacity-75">Ctrl+E</span>
+                    </button>
+                </div>
+            </div>
+            <div class="relative group">
+                <button class="hover:text-black font-medium py-0.5 px-1.5 rounded hover:bg-black/5">Edit</button>
+                <div class="hidden group-hover:block absolute left-0 top-full w-48 bg-white border border-gray-300 shadow-lg rounded z-50 py-1">
+                    <button onclick="undo()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between">
+                        <span>Undo Operation</span><span class="text-[10px] opacity-75">Ctrl+Z</span>
+                    </button>
+                    <button onclick="redo()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between">
+                        <span>Redo Operation</span><span class="text-[10px] opacity-75">Ctrl+Y</span>
+                    </button>
+                </div>
+            </div>
+            <div class="relative group">
+                <button class="hover:text-black font-medium py-0.5 px-1.5 rounded hover:bg-black/5">Partition</button>
+                <div class="hidden group-hover:block absolute left-0 top-full w-52 bg-white border border-gray-300 shadow-lg rounded z-50 py-1">
+                    <button onclick="openNewDialog()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white">New Time Block...</button>
+                    <button onclick="openEditDialog()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white">Resize / Move / Label...</button>
+                    <button onclick="splitSelectedAtMidpoint()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white">Split Selected Block in Half</button>
+                    <button onclick="mergeWithNext()" class="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white">Merge with Next Block</button>
+                    <div class="border-t border-gray-200 my-1"></div>
+                    <button onclick="deleteSelected()" class="w-full text-left px-3 py-1.5 hover:bg-red-600 hover:text-white">Delete (Make Unallocated)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Snap Interval & Quick Info -->
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-1.5">
+                <i class="fa-solid fa-magnet text-gray-500 text-[11px]"></i>
+                <label for="snapSelect" class="text-gray-600 font-medium">Align to:</label>
+                <select id="snapSelect" class="bg-white border border-gray-300 rounded px-1.5 py-0.5 font-mono-tech text-xs focus:outline-none focus:border-blue-500">
+                    <option value="1">1 min (Exact)</option>
+                    <option value="5">5 min</option>
+                    <option value="15" selected>15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="60">60 min</option>
+                </select>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Primary GParted Action Toolbar -->
+    <div class="bg-[#f6f7f9] border-b border-[#b8bfc8] px-3 py-2 flex flex-wrap items-center gap-1.5 shadow-sm">
+        <!-- New Partition -->
+        <button id="btnNew" onclick="openNewDialog()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Create a new time block in unallocated space">
+            <i class="fa-solid fa-file-circle-plus text-emerald-600 text-sm"></i>
+            <span>New</span>
+        </button>
+
+        <!-- Delete Partition -->
+        <button id="btnDelete" onclick="deleteSelected()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Delete selected block (turns into unallocated time)">
+            <i class="fa-solid fa-trash-can text-red-600 text-sm"></i>
+            <span>Delete</span>
+        </button>
+
+        <div class="h-6 w-[1px] bg-gray-300 mx-1"></div>
+
+        <!-- Resize / Move / Edit -->
+        <button id="btnResize" onclick="openEditDialog()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Resize, move, or relabel selected segment">
+            <i class="fa-solid fa-left-right text-amber-600 text-sm"></i>
+            <span>Resize/Move</span>
+        </button>
+
+        <!-- Split / Add Extra Point Tool -->
+        <button id="btnSplitTool" onclick="toggleSplitMode()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Click anywhere on the partition bar to insert an In/Out split point">
+            <i class="fa-solid fa-scissors text-purple-600 text-sm"></i>
+            <span>Add Split Point</span>
+        </button>
+
+        <!-- Quick Split Midpoint -->
+        <button id="btnQuickSplit" onclick="splitSelectedAtMidpoint()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Insert a boundary point right in the middle of the selected block">
+            <i class="fa-solid fa-divide text-indigo-600 text-sm"></i>
+            <span class="hidden sm:inline">Split Midpoint</span>
+        </button>
+
+        <!-- Merge Adjacent -->
+        <button id="btnMerge" onclick="mergeWithNext()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Merge selected segment with the adjacent segment">
+            <i class="fa-solid fa-object-group text-teal-600 text-sm"></i>
+            <span class="hidden md:inline">Merge Next</span>
+        </button>
+
+        <div class="h-6 w-[1px] bg-gray-300 mx-1"></div>
+
+        <!-- Undo / Redo -->
+        <button id="btnUndo" onclick="undo()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Undo last partition change (Ctrl+Z)">
+            <i class="fa-solid fa-rotate-left text-blue-600 text-sm"></i>
+            <span class="hidden sm:inline">Undo</span>
+        </button>
+
+        <button id="btnRedo" onclick="redo()" class="gtk-btn px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-medium text-gray-800" title="Redo partition change (Ctrl+Y)">
+            <i class="fa-solid fa-rotate-right text-blue-600 text-sm"></i>
+            <span class="hidden sm:inline">Redo</span>
+        </button>
+
+        <div class="h-6 w-[1px] bg-gray-300 mx-1"></div>
+
+        <!-- Apply / Export -->
+        <button onclick="openExportModal()" class="gtk-btn px-3 py-1.5 rounded flex items-center gap-1.5 text-xs font-semibold text-emerald-800 border-emerald-400" title="Apply and export schedule">
+            <i class="fa-solid fa-check text-emerald-600 text-sm"></i>
+            <span>Apply / Export</span>
+        </button>
+
+        <!-- Split Mode Banner Hint -->
+        <div id="splitModeBanner" class="hidden ml-auto bg-purple-100 border border-purple-400 text-purple-900 px-2.5 py-1 rounded text-xs flex items-center gap-2">
+            <i class="fa-solid fa-crosshairs animate-pulse"></i>
+            <span><strong>Split Point Mode:</strong> Click anywhere on the partition bar below to insert a new In/Out boundary.</span>
+            <button onclick="toggleSplitMode(false)" class="underline font-semibold ml-1 hover:text-purple-700">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Main Workspace Container -->
+    <main class="flex-1 flex flex-col p-3 gap-3 max-w-[1600px] w-full mx-auto">
+
+        <!-- SECTION 1: GParted Visual Partition Bar Panel -->
+        <section class="bg-white border border-[#b8bfc8] rounded shadow-sm p-3 flex flex-col gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+                <div class="flex items-center gap-2">
+                    <span class="font-semibold text-gray-800">Timeline Partition Map</span>
+                    <span class="text-gray-400">|</span>
+                    <span id="hoverTimeReadout" class="font-mono-tech bg-gray-100 border border-gray-300 px-2 py-0.5 rounded text-gray-800">
+                        Cursor: --:--
+                    </span>
+                </div>
+                <div class="flex items-center gap-3 text-[11px] text-gray-500">
+                    <span><i class="fa-solid fa-arrows-left-right mr-1"></i>Drag dividers to resize</span>
+                    <span><i class="fa-solid fa-computer-mouse mr-1"></i>Double-click to edit/split</span>
+                </div>
+            </div>
+
+            <!-- Time Ruler Ticks -->
+            <div id="timeRuler" class="relative h-5 w-full border-b border-gray-300 font-mono-tech text-[10px] text-gray-500 select-none">
+                <!-- Populated dynamically via JS -->
+            </div>
+
+            <!-- The Iconic GParted Visual Partition Bar -->
+            <div class="relative bg-[#cfd4dc] p-1.5 rounded border border-[#9aa3b0] shadow-inner">
+                <div id="partitionBar" class="relative w-full h-24 sm:h-28 bg-white border border-gray-400 flex items-stretch overflow-visible">
+                    <!-- Partition blocks and draggable handles injected here -->
+                </div>
+
+                <!-- Hover Ghost Line for Split Mode -->
+                <div id="splitCursorLine" class="hidden pointer-events-none absolute top-1.5 bottom-1.5 w-[2px] bg-purple-600 z-40">
+                    <div id="splitCursorBadge" class="absolute -top-6 -translate-x-1/2 bg-purple-700 text-white font-mono-tech text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap">
+                        12:00
+                    </div>
+                </div>
+            </div>
+
+            <!-- Category Legend & Quick Add Point Bar -->
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                <div id="categoryLegend" class="flex flex-wrap items-center gap-3">
+                    <!-- Populated dynamically -->
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-gray-500 text-[11px]">Quick Insert Point at:</span>
+                    <input type="time" id="quickPointTime" value="12:30" class="border border-gray-300 rounded px-1.5 py-0.5 font-mono-tech text-xs bg-gray-50">
+                    <button onclick="insertPointFromInput()" class="gtk-btn px-2 py-0.5 rounded text-xs font-medium text-gray-800">
+                        <i class="fa-solid fa-plus text-blue-600 mr-1"></i>Insert Point
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2: GParted Partition Table (List View) -->
+        <section class="bg-white border border-[#b8bfc8] rounded shadow-sm flex-1 flex flex-col overflow-hidden min-h-[300px]">
+            <div class="bg-[#eef0f3] border-b border-[#c5cbd3] px-3 py-1.5 flex items-center justify-between">
+                <span class="text-xs font-semibold text-gray-700 uppercase tracking-wider">Partition Table (Chronological In / Out Segments)</span>
+                <span class="text-xs text-gray-500" id="tableSelectionHint">Click a row or bar segment to inspect</span>
+            </div>
+
+            <div class="overflow-x-auto flex-1">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-[#f6f7f9] border-b border-[#c5cbd3] text-[11px] font-semibold text-gray-600 uppercase tracking-wider">
+                            <th class="py-2 px-3 border-r border-gray-200 w-32">Partition</th>
+                            <th class="py-2 px-3 border-r border-gray-200">Label / Activity</th>
+                            <th class="py-2 px-3 border-r border-gray-200 w-36">Category (Type)</th>
+                            <th class="py-2 px-3 border-r border-gray-200 w-28">Start (In)</th>
+                            <th class="py-2 px-3 border-r border-gray-200 w-28">End (Out)</th>
+                            <th class="py-2 px-3 border-r border-gray-200 w-28">Duration</th>
+                            <th class="py-2 px-3 w-36 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="partitionTableBody" class="divide-y divide-gray-200 text-xs">
+                        <!-- Rows injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- SECTION 3: Pending / Applied Operations Log (Collapsible GParted Bottom Drawer) -->
+        <section class="bg-white border border-[#b8bfc8] rounded shadow-sm overflow-hidden">
+            <div onclick="toggleOperationsDrawer()" class="bg-[#eef0f3] px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-[#e4e7ec]">
+                <div class="flex items-center gap-2 text-xs font-semibold text-gray-700">
+                    <i id="drawerChevron" class="fa-solid fa-chevron-right text-[10px] transition-transform"></i>
+                    <span>Operations History & Partition Log</span>
+                    <span id="opCountBadge" class="bg-blue-100 text-blue-800 border border-blue-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono-tech">0</span>
+                </div>
+                <span class="text-[11px] text-gray-500">Click to expand operation log</span>
+            </div>
+            <div id="operationsDrawer" class="hidden max-h-36 overflow-y-auto p-2 bg-[#fafbfc] border-t border-gray-200 font-mono-tech text-xs space-y-1">
+                <!-- Operation items injected via JS -->
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Bottom Status Bar -->
+    <footer class="bg-[#e1e4e8] border-t border-[#b8bfc8] px-3 py-1.5 text-xs text-gray-700 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-4">
+            <span id="statusMessage" class="font-medium text-gray-800">Ready.</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-4 font-mono-tech text-[11px]">
+            <span class="flex items-center gap-1.5">
+                <span class="w-2.5 h-2.5 inline-block rounded-sm bg-blue-600"></span>
+                Allocated: <strong id="statAllocated">0h 00m</strong>
+            </span>
+            <span class="flex items-center gap-1.5">
+                <span class="w-2.5 h-2.5 inline-block rounded-sm unallocated-hatch border border-gray-400"></span>
+                Unallocated: <strong id="statUnallocated">24h 00m</strong>
+            </span>
+            <span>
+                Segments: <strong id="statCount">0</strong>
+            </span>
+        </div>
+    </footer>
+
+    <!-- MODAL 1: Create / Edit / Resize Partition Dialog (GParted Style) -->
+    <div id="partitionModal" class="hidden fixed inset-0 bg-black/45 backdrop-blur-[1px] z-50 flex items-center justify-center p-4">
+        <div class="bg-[#f6f7f9] border border-[#8e96a0] rounded-md shadow-2xl w-full max-w-lg overflow-hidden">
+            <!-- Modal Titlebar -->
+            <div class="bg-[#2c333d] text-white px-3.5 py-2 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs font-semibold">
+                    <i id="modalIcon" class="fa-solid fa-file-circle-plus text-emerald-400"></i>
+                    <span id="modalTitle">Create New Time Partition</span>
+                </div>
+                <button onclick="closePartitionModal()" class="text-gray-300 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-4 space-y-4 text-xs">
+                <!-- GParted Mini Visual Preview Bar inside Dialog -->
+                <div class="bg-white p-2.5 rounded border border-gray-300 space-y-1.5">
+                    <div class="flex justify-between text-[11px] text-gray-500 font-mono-tech">
+                        <span>Container Bounds: <strong id="modalBoundsLabel">00:00 – 24:00</strong></span>
+                        <span>Duration: <strong id="modalDurationLabel" class="text-blue-700">1h 00m</strong></span>
+                    </div>
+                    <div class="h-9 w-full bg-[#cfd4dc] p-1 rounded border border-gray-400 flex items-stretch overflow-hidden" id="modalMiniBar">
+                        <div id="miniFreeBefore" class="unallocated-hatch h-full transition-all"></div>
+                        <div id="miniAllocated" class="h-full border-2 flex items-center justify-center font-semibold truncate px-1 transition-all"></div>
+                        <div id="miniFreeAfter" class="unallocated-hatch h-full transition-all"></div>
+                    </div>
+                </div>
+
+                <!-- GParted-style Numeric Spinners (Free preceding, Size, Free following, Start In, End Out) -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3 rounded border border-gray-300">
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">Start Time (In):</label>
+                        <input type="time" id="inputStartTime" class="w-full border border-gray-300 rounded px-2 py-1.5 font-mono-tech text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">End Time (Out):</label>
+                        <input type="time" id="inputEndTime" class="w-full border border-gray-300 rounded px-2 py-1.5 font-mono-tech text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">Free time preceding (mins):</label>
+                        <input type="number" id="inputFreeBefore" min="0" step="5" class="w-full border border-gray-300 rounded px-2 py-1.5 font-mono-tech text-xs bg-gray-50">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">New duration (mins):</label>
+                        <input type="number" id="inputDurationMins" min="5" step="5" class="w-full border border-gray-300 rounded px-2 py-1.5 font-mono-tech text-xs bg-gray-50">
+                    </div>
+                </div>
+
+                <!-- Label & Category -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3 rounded border border-gray-300">
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">Segment Label / Name:</label>
+                        <input type="text" id="inputLabel" placeholder="e.g., Deep Work, Sprint Sync..." class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">Category (Filesystem Type):</label>
+                        <select id="inputCategory" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                            <!-- Options populated via JS -->
+                        </select>
+                    </div>
+                </div>
+
+                <div id="modalValidationMsg" class="hidden text-red-600 bg-red-50 border border-red-300 px-2.5 py-1.5 rounded text-xs"></div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="bg-[#e8eaed] border-t border-gray-300 px-4 py-2.5 flex justify-end gap-2">
+                <button onclick="closePartitionModal()" class="gtk-btn px-3.5 py-1.5 rounded text-xs font-medium text-gray-700">Cancel</button>
+                <button id="modalSubmitBtn" onclick="savePartitionModal()" class="gtk-btn px-4 py-1.5 rounded text-xs font-semibold text-blue-800 border-blue-400">Add Partition</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: Export Schedule Dialog -->
+    <div id="exportModal" class="hidden fixed inset-0 bg-black/45 backdrop-blur-[1px] z-50 flex items-center justify-center p-4">
+        <div class="bg-[#f6f7f9] border border-[#8e96a0] rounded-md shadow-2xl w-full max-w-xl overflow-hidden">
+            <div class="bg-[#2c333d] text-white px-3.5 py-2 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs font-semibold">
+                    <i class="fa-solid fa-file-export text-emerald-400"></i>
+                    <span>Apply & Export Partition Table</span>
+                </div>
+                <button onclick="closeExportModal()" class="text-gray-300 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-3 text-xs">
+                <div class="flex items-center justify-between">
+                    <span class="text-gray-700 font-medium">Select Export Format:</span>
+                    <div class="flex gap-1.5">
+                        <button onclick="renderExportContent('markdown')" id="tabExportMd" class="gtk-btn active px-2.5 py-1 rounded font-medium">Markdown Table</button>
+                        <button onclick="renderExportContent('csv')" id="tabExportCsv" class="gtk-btn px-2.5 py-1 rounded font-medium">CSV</button>
+                        <button onclick="renderExportContent('json')" id="tabExportJson" class="gtk-btn px-2.5 py-1 rounded font-medium">JSON</button>
+                    </div>
+                </div>
+                <textarea id="exportTextarea" readonly class="w-full h-56 font-mono-tech text-[11px] bg-white border border-gray-300 rounded p-2.5 focus:outline-none"></textarea>
+            </div>
+            <div class="bg-[#e8eaed] border-t border-gray-300 px-4 py-2.5 flex items-center justify-between">
+                <span id="copyConfirmText" class="text-emerald-700 font-medium text-xs opacity-0 transition-opacity">Copied to clipboard!</span>
+                <div class="flex gap-2">
+                    <button onclick="copyExportText()" class="gtk-btn px-3.5 py-1.5 rounded text-xs font-semibold text-blue-800">
+                        <i class="fa-solid fa-copy mr-1"></i>Copy to Clipboard
+                    </button>
+                    <button onclick="closeExportModal()" class="gtk-btn px-3.5 py-1.5 rounded text-xs font-medium text-gray-700">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * GTimeParted — Daily Schedule Partition Editor
+         * Architecture:
+         * - Data Model: An array of non-overlapping allocated segments: { id, start, end, label, category }
+         *   where `start` and `end` are minutes from midnight (0 to 1440).
+         * - Computed View: `buildFullPartitionMap()` automatically derives unallocated gaps between
+         *   the active day window [windowStart, windowEnd] and allocated segments, mirroring GParted's
+         *   exact partition + unallocated representation.
+         */
+
+        // GParted Filesystem-inspired Category Palette (thick colored border + light interior tint)
+        const CATEGORIES = {
+            focus: {
+                name: 'Deep Work (ext4)',
+                short: 'Deep Work',
+                border: '#2563eb', // Classic GParted ext4 Blue
+                bg: '#dbeafe',
+                text: '#1e3a8a',
+                badge: 'bg-blue-100 text-blue-800 border-blue-400'
+            },
+            meeting: {
+                name: 'Meetings / Sync (ntfs)',
+                short: 'Meeting',
+                border: '#059669', // GParted NTFS Teal/Green
+                bg: '#d1fae5',
+                text: '#064e3b',
+                badge: 'bg-emerald-100 text-emerald-800 border-emerald-400'
+            },
+            routine: {
+                name: 'Routine / Admin (fat32)',
+                short: 'Routine',
+                border: '#d97706', // GParted FAT32 Amber
+                bg: '#fef3c7',
+                text: '#78350f',
+                badge: 'bg-amber-100 text-amber-800 border-amber-400'
+            },
+            break: {
+                name: 'Break / Meal (linux-swap)',
+                short: 'Break',
+                border: '#dc2626', // GParted Swap Red
+                bg: '#fee2e2',
+                text: '#7f1d1d',
+                badge: 'bg-red-100 text-red-800 border-red-400'
+            },
+            personal: {
+                name: 'Personal / Health (btrfs)',
+                short: 'Personal',
+                border: '#7c3aed', // GParted Btrfs Purple
+                bg: '#ede9fe',
+                text: '#4c1d95',
+                badge: 'bg-purple-100 text-purple-800 border-purple-400'
+            },
+            rest: {
+                name: 'Sleep / Rest (xfs)',
+                short: 'Sleep / Rest',
+                border: '#475569', // Slate
+                bg: '#e2e8f0',
+                text: '#1e293b',
+                badge: 'bg-slate-200 text-slate-800 border-slate-400'
+            }
+        };
+
+        // Application State
+        let segments = [];
+        let selectedBlockId = null; // Can be a segment ID or 'unalloc-<start>-<end>'
+        let windowStart = 0;        // Default 00:00 (0 mins)
+        let windowEnd = 1440;       // Default 24:00 (1440 mins)
+        let snapMinutes = 15;
+        let isSplitMode = false;
+
+        // Undo / Redo Stacks & Operation Log
+        let undoStack = [];
+        let redoStack = [];
+        let operationLog = [];
+
+        // Modal State
+        let modalContext = null; // { mode: 'new' | 'edit', targetId, minBound, maxBound }
+
+        // =========================================================================
+        // TIME FORMATTING & MATH UTILITIES
+        // =========================================================================
+
+        function minsToTime(mins) {
+            const clamped = Math.max(0, Math.min(1440, Math.round(mins)));
+            if (clamped === 1440) return '24:00';
+            const h = Math.floor(clamped / 60);
+            const m = clamped % 60;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        }
+
+        function timeToMins(timeStr) {
+            if (!timeStr) return 0;
+            if (timeStr === '24:00') return 1440;
+            const [h, m] = timeStr.split(':').map(Number);
+            return (h * 60) + (m || 0);
+        }
+
+        function formatDuration(mins) {
+            const m = Math.max(0, Math.round(mins));
+            const h = Math.floor(m / 60);
+            const rem = m % 60;
+            if (h === 0) return `${rem}m`;
+            if (rem === 0) return `${h}h 00m`;
+            return `${h}h ${String(rem).padStart(2, '0')}m`;
+        }
+
+        function snapValue(mins) {
+            return Math.round(mins / snapMinutes) * snapMinutes;
+        }
+
+        function generateId() {
+            return 'seg_' + Math.random().toString(36).substring(2, 9);
+        }
+
+        // =========================================================================
+        // PARTITION MAP COMPUTATION (Merging Allocated + Unallocated Gaps)
+        // =========================================================================
+
+        function buildFullPartitionMap() {
+            // Sort segments chronologically
+            const sorted = [...segments].sort((a, b) => a.start - b.start);
+            const fullList = [];
+            let cursor = windowStart;
+            let partIndex = 1;
+
+            for (const seg of sorted) {
+                // Skip segments completely outside current view window
+                if (seg.end <= windowStart || seg.start >= windowEnd) continue;
+
+                const effectiveStart = Math.max(seg.start, windowStart);
+                const effectiveEnd = Math.min(seg.end, windowEnd);
+
+                // If there is unallocated space before this segment
+                if (effectiveStart > cursor) {
+                    fullList.push({
+                        id: `unalloc_${cursor}_${effectiveStart}`,
+                        isUnallocated: true,
+                        deviceName: 'unallocated',
+                        label: 'unallocated',
+                        category: 'unallocated',
+                        start: cursor,
+                        end: effectiveStart,
+                        duration: effectiveStart - cursor
+                    });
+                }
+
+                fullList.push({
+                    ...seg,
+                    isUnallocated: false,
+                    deviceName: `/dev/day0p${partIndex++}`,
+                    viewStart: effectiveStart,
+                    viewEnd: effectiveEnd,
+                    duration: seg.end - seg.start
+                });
+
+                cursor = effectiveEnd;
+            }
+
+            // Trailing unallocated space up to windowEnd
+            if (cursor < windowEnd) {
+                fullList.push({
+                    id: `unalloc_${cursor}_${windowEnd}`,
+                    isUnallocated: true,
+                    deviceName: 'unallocated',
+                    label: 'unallocated',
+                    category: 'unallocated',
+                    start: cursor,
+                    end: windowEnd,
+                    duration: windowEnd - cursor
+                });
+            }
+
+            return fullList;
+        }
+
+        // =========================================================================
+        // STATE HISTORY (UNDO / REDO / LOGGING)
+        // =========================================================================
+
+        function commitState(actionDescription) {
+            undoStack.push(JSON.stringify(segments));
+            if (undoStack.length > 40) undoStack.shift();
+            redoStack = [];
+
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            operationLog.unshift({ time: timestamp, desc: actionDescription });
+            setStatus(actionDescription);
+            renderAll();
+        }
+
+        function undo() {
+            if (undoStack.length === 0) return;
+            redoStack.push(JSON.stringify(segments));
+            segments = JSON.parse(undoStack.pop());
+            operationLog.unshift({
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                desc: 'Undo last operation'
+            });
+            setStatus('Undid last operation.');
+            renderAll();
+        }
+
+        function redo() {
+            if (redoStack.length === 0) return;
+            undoStack.push(JSON.stringify(segments));
+            segments = JSON.parse(redoStack.pop());
+            operationLog.unshift({
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                desc: 'Redo operation'
+            });
+            setStatus('Redid operation.');
+            renderAll();
+        }
+
+        function setStatus(msg) {
+            document.getElementById('statusMessage').textContent = msg;
+        }
+
+        // =========================================================================
+        // CORE RENDERING ENGINE
+        // =========================================================================
+
+        function renderAll() {
+            const fullMap = buildFullPartitionMap();
+            renderRuler();
+            renderPartitionBar(fullMap);
+            renderPartitionTable(fullMap);
+            renderStats(fullMap);
+            renderOperationsLog();
+            updateToolbarButtons(fullMap);
+        }
+
+        function renderRuler() {
+            const ruler = document.getElementById('timeRuler');
+            ruler.innerHTML = '';
+            const totalSpan = windowEnd - windowStart;
+            const step = totalSpan <= 720 ? 60 : 120; // Every 1h or 2h
+
+            for (let t = windowStart; t <= windowEnd; t += step) {
+                const pct = ((t - windowStart) / totalSpan) * 100;
+                const tick = document.createElement('div');
+                tick.className = 'absolute top-0 bottom-0 flex flex-col items-center';
+                tick.style.left = `${pct}%`;
+
+                // Adjust alignment at edges so labels don't clip
+                let translateClass = '-translate-x-1/2';
+                if (t === windowStart) translateClass = 'translate-x-0';
+                if (t === windowEnd) translateClass = '-translate-x-full';
+
+                tick.innerHTML = `
+                    <span class="${translateClass} leading-none mb-0.5">${minsToTime(t)}</span>
+                    <div class="w-[1px] h-1.5 bg-gray-400"></div>
+                `;
+                ruler.appendChild(tick);
+            }
+        }
+
+        function renderPartitionBar(fullMap) {
+            const bar = document.getElementById('partitionBar');
+            bar.innerHTML = '';
+            const totalSpan = windowEnd - windowStart;
+
+            fullMap.forEach((block, idx) => {
+                const bStart = block.isUnallocated ? block.start : block.viewStart;
+                const bEnd = block.isUnallocated ? block.end : block.viewEnd;
+                const widthPct = ((bEnd - bStart) / totalSpan) * 100;
+                const isSelected = selectedBlockId === block.id;
+
+                const el = document.createElement('div');
+                el.style.width = `${widthPct}%`;
+                el.dataset.id = block.id;
+
+                if (block.isUnallocated) {
+                    el.className = `partition-block unallocated-hatch h-full border-r border-gray-400/70 last:border-r-0 flex flex-col items-center justify-center px-1 cursor-pointer select-none ${isSelected ? 'partition-selected' : ''}`;
+                    el.innerHTML = `
+                        <span class="text-[11px] font-medium text-gray-600 truncate max-w-full">unallocated</span>
+                        <span class="text-[10px] font-mono-tech text-gray-500 truncate max-w-full">${formatDuration(block.duration)}</span>
+                    `;
+                } else {
+                    const cat = CATEGORIES[block.category] || CATEGORIES.focus;
+                    el.style.backgroundColor = cat.bg;
+                    el.style.borderColor = cat.border;
+                    el.style.color = cat.text;
+                    el.className = `partition-block h-full border-[3px] flex flex-col items-center justify-center px-1.5 cursor-pointer select-none ${isSelected ? 'partition-selected' : ''}`;
+
+                    el.innerHTML = `
+                        <span class="text-[11px] font-bold truncate max-w-full leading-tight">${escapeHtml(block.label)}</span>
+                        <span class="text-[10px] font-mono-tech opacity-85 truncate max-w-full">${formatDuration(block.duration)}</span>
+                        <span class="text-[9px] font-mono-tech opacity-70 hidden sm:inline truncate max-w-full">${minsToTime(block.start)}–${minsToTime(block.end)}</span>
+                    `;
+                }
+
+                // Single click: select block (or insert split point if Split Mode is active)
+                el.addEventListener('click', (e) => {
+                    if (isSplitMode) return; // Handled by bar click handler
+                    e.stopPropagation();
+                    selectedBlockId = block.id;
+                    renderAll();
+                });
+
+                // Double click: Open Edit/New modal
+                el.addEventListener('dblclick', (e) => {
+                    if (isSplitMode) return;
+                    e.stopPropagation();
+                    selectedBlockId = block.id;
+                    if (block.isUnallocated) {
+                        openNewDialog(block);
+                    } else {
+                        openEditDialog(block);
+                    }
+                });
+
+                bar.appendChild(el);
+
+                // Add Draggable Resize Handle at the RIGHT boundary of every block except the very last one
+                if (idx < fullMap.length - 1) {
+                    const nextBlock = fullMap[idx + 1];
+                    const boundaryMins = bEnd;
+                    const leftPct = ((boundaryMins - windowStart) / totalSpan) * 100;
+
+                    const handle = document.createElement('div');
+                    handle.className = 'resize-handle';
+                    handle.style.left = `${leftPct}%`;
+                    handle.title = `Drag to adjust boundary (${minsToTime(boundaryMins)})`;
+
+                    attachDragResize(handle, block, nextBlock);
+                    bar.appendChild(handle);
+                }
+            });
+        }
+
+        function renderPartitionTable(fullMap) {
+            const tbody = document.getElementById('partitionTableBody');
+            tbody.innerHTML = '';
+
+            fullMap.forEach((block) => {
+                const isSelected = selectedBlockId === block.id;
+                const tr = document.createElement('tr');
+                tr.className = `cursor-pointer transition-colors ${
+                    isSelected
+                        ? 'bg-blue-100/90 font-medium text-gray-900'
+                        : 'hover:bg-gray-50 text-gray-700'
+                }`;
+
+                tr.addEventListener('click', () => {
+                    selectedBlockId = block.id;
+                    renderAll();
+                });
+
+                tr.addEventListener('dblclick', () => {
+                    selectedBlockId = block.id;
+                    if (block.isUnallocated) openNewDialog(block);
+                    else openEditDialog(block);
+                });
+
+                if (block.isUnallocated) {
+                    tr.innerHTML = `
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech text-gray-500 flex items-center gap-2">
+                            <span class="w-3.5 h-3.5 rounded-sm unallocated-hatch border border-gray-400 inline-block shrink-0"></span>
+                            <span>unallocated</span>
+                        </td>
+                        <td class="py-2 px-3 border-r border-gray-200 italic text-gray-400">Free / Unscheduled Time</td>
+                        <td class="py-2 px-3 border-r border-gray-200 text-gray-400">unallocated</td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech">${minsToTime(block.start)}</td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech">${minsToTime(block.end)}</td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech text-gray-500">${formatDuration(block.duration)}</td>
+                        <td class="py-2 px-3 text-right">
+                            <button onclick="event.stopPropagation(); selectedBlockId='${block.id}'; openNewDialog();" class="text-emerald-700 hover:underline font-medium text-[11px]">
+                                <i class="fa-solid fa-plus mr-0.5"></i>Allocate
+                            </button>
+                        </td>
+                    `;
+                } else {
+                    const cat = CATEGORIES[block.category] || CATEGORIES.focus;
+                    tr.innerHTML = `
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech font-semibold text-gray-800 flex items-center gap-2">
+                            <span class="w-3.5 h-3.5 rounded-sm inline-block shrink-0 border-2" style="background-color:${cat.bg}; border-color:${cat.border};"></span>
+                            <span>${block.deviceName}</span>
+                        </td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-semibold text-gray-900">${escapeHtml(block.label)}</td>
+                        <td class="py-2 px-3 border-r border-gray-200">
+                            <span class="px-1.5 py-0.5 rounded border text-[10px] font-medium ${cat.badge}">${cat.short}</span>
+                        </td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech">${minsToTime(block.start)}</td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech">${minsToTime(block.end)}</td>
+                        <td class="py-2 px-3 border-r border-gray-200 font-mono-tech font-semibold">${formatDuration(block.duration)}</td>
+                        <td class="py-2 px-3 text-right space-x-2">
+                            <button onclick="event.stopPropagation(); selectedBlockId='${block.id}'; openEditDialog();" class="text-blue-700 hover:underline text-[11px]" title="Edit Label & Times">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); selectedBlockId='${block.id}'; splitSelectedAtMidpoint();" class="text-purple-700 hover:underline text-[11px]" title="Split Block">
+                                <i class="fa-solid fa-scissors"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); selectedBlockId='${block.id}'; deleteSelected();" class="text-red-600 hover:underline text-[11px]" title="Delete">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </td>
+                    `;
+                }
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderStats(fullMap) {
+            let allocMins = 0;
+            let unallocMins = 0;
+            let segCount = 0;
+
+            fullMap.forEach(b => {
+                if (b.isUnallocated) {
+                    unallocMins += b.duration;
+                } else {
+                    allocMins += (b.viewEnd - b.viewStart);
+                    segCount++;
+                }
+            });
+
+            document.getElementById('statAllocated').textContent = formatDuration(allocMins);
+            document.getElementById('statUnallocated').textContent = formatDuration(unallocMins);
+            document.getElementById('statCount').textContent = segCount;
+        }
+
+        function renderOperationsLog() {
+            const badge = document.getElementById('opCountBadge');
+            const drawer = document.getElementById('operationsDrawer');
+            badge.textContent = operationLog.length;
+
+            if (operationLog.length === 0) {
+                drawer.innerHTML = '<div class="text-gray-400 italic">No operations recorded yet.</div>';
+                return;
+            }
+
+            drawer.innerHTML = operationLog.map((op, i) => `
+                <div class="flex items-center gap-2 text-gray-700">
+                    <span class="text-emerald-600"><i class="fa-solid fa-circle-check"></i></span>
+                    <span class="text-gray-400">[${op.time}]</span>
+                    <span>${escapeHtml(op.desc)}</span>
+                </div>
+            `).join('');
+        }
+
+        function updateToolbarButtons(fullMap) {
+            const selected = fullMap.find(b => b.id === selectedBlockId);
+            const hasUnallocated = fullMap.some(b => b.isUnallocated);
+
+            document.getElementById('btnNew').disabled = !hasUnallocated;
+            document.getElementById('btnDelete').disabled = !selected || selected.isUnallocated;
+            document.getElementById('btnResize').disabled = !selected || selected.isUnallocated;
+            document.getElementById('btnQuickSplit').disabled = !selected || selected.isUnallocated || selected.duration < 10;
+
+            // Can merge if selected is allocated and next item in fullMap is also allocated
+            const idx = fullMap.findIndex(b => b.id === selectedBlockId);
+            const canMerge = selected && !selected.isUnallocated && idx >= 0 && idx < fullMap.length - 1 && !fullMap[idx + 1].isUnallocated;
+            document.getElementById('btnMerge').disabled = !canMerge;
+
+            document.getElementById('btnUndo').disabled = undoStack.length === 0;
+            document.getElementById('btnRedo').disabled = redoStack.length === 0;
+        }
+
+        // =========================================================================
+        // DRAG-TO-RESIZE BOUNDARIES ON THE VISUAL PARTITION BAR
+        // =========================================================================
+
+        function attachDragResize(handleEl, leftBlock, rightBlock) {
+            const startDrag = (clientX) => {
+                handleEl.classList.add('active');
+                const barRect = document.getElementById('partitionBar').getBoundingClientRect();
+                const totalSpan = windowEnd - windowStart;
+                const snapshotBefore = JSON.stringify(segments);
+
+                // Determine min and max allowed boundary values
+                const minAllowed = leftBlock.start + 5;
+                const maxAllowed = rightBlock.end - 5;
+
+                const onMove = (moveClientX) => {
+                    const relX = Math.max(0, Math.min(barRect.width, moveClientX - barRect.left));
+                    const rawMins = windowStart + (relX / barRect.width) * totalSpan;
+                    const snapped = Math.max(minAllowed, Math.min(maxAllowed, snapValue(rawMins)));
+
+                    // Update left block end if it's an allocated segment
+                    if (!leftBlock.isUnallocated) {
+                        const segL = segments.find(s => s.id === leftBlock.id);
+                        if (segL) segL.end = snapped;
+                    }
+                    // Update right block start if it's an allocated segment
+                    if (!rightBlock.isUnallocated) {
+                        const segR = segments.find(s => s.id === rightBlock.id);
+                        if (segR) segR.start = snapped;
+                    }
+
+                    document.getElementById('hoverTimeReadout').textContent = `Boundary: ${minsToTime(snapped)}`;
+                    renderAll();
+                };
+
+                const onEnd = () => {
+                    handleEl.classList.remove('active');
+                    window.removeEventListener('mousemove', mouseMoveHandler);
+                    window.removeEventListener('mouseup', mouseUpHandler);
+                    window.removeEventListener('touchmove', touchMoveHandler);
+                    window.removeEventListener('touchend', touchEndHandler);
+
+                    if (JSON.stringify(segments) !== snapshotBefore) {
+                        undoStack.push(snapshotBefore);
+                        redoStack = [];
+                        const desc = `Resized boundary between "${leftBlock.label}" and "${rightBlock.label}"`;
+                        operationLog.unshift({
+                            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                            desc
+                        });
+                        setStatus(desc);
+                        renderAll();
+                    }
+                };
+
+                const mouseMoveHandler = (e) => onMove(e.clientX);
+                const mouseUpHandler = () => onEnd();
+                const touchMoveHandler = (e) => {
+                    if (e.touches.length > 0) onMove(e.touches[0].clientX);
+                };
+                const touchEndHandler = () => onEnd();
+
+                window.addEventListener('mousemove', mouseMoveHandler);
+                window.addEventListener('mouseup', mouseUpHandler);
+                window.addEventListener('touchmove', touchMoveHandler, { passive: true });
+                window.addEventListener('touchend', touchEndHandler);
+            };
+
+            handleEl.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                startDrag(e.clientX);
+            });
+
+            handleEl.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+                if (e.touches.length > 0) startDrag(e.touches[0].clientX);
+            }, { passive: true });
+        }
+
+        // =========================================================================
+        // SPLIT / ADD EXTRA IN-OUT POINTS
+        // =========================================================================
+
+        function toggleSplitMode(forceState) {
+            isSplitMode = typeof forceState === 'boolean' ? forceState : !isSplitMode;
+            const btn = document.getElementById('btnSplitTool');
+            const banner = document.getElementById('splitModeBanner');
+            const bar = document.getElementById('partitionBar');
+            const cursorLine = document.getElementById('splitCursorLine');
+
+            if (isSplitMode) {
+                btn.classList.add('active');
+                banner.classList.remove('hidden');
+                bar.classList.add('split-mode-cursor');
+                setStatus('Split Point Mode active: Click anywhere on the timeline bar to insert an In/Out boundary.');
+            } else {
+                btn.classList.remove('active');
+                banner.classList.add('hidden');
+                bar.classList.remove('split-mode-cursor');
+                cursorLine.classList.add('hidden');
+                setStatus('Ready.');
+            }
+        }
+
+        function insertTimePoint(targetMins) {
+            const point = snapValue(targetMins);
+            if (point <= windowStart || point >= windowEnd) {
+                setStatus('Cannot insert point at the outer boundaries of the day window.');
+                return;
+            }
+
+            // Check if point falls strictly inside an existing allocated segment
+            const containingSeg = segments.find(s => point > s.start && point < s.end);
+            if (containingSeg) {
+                if (point - containingSeg.start < 5 || containingSeg.end - point < 5) {
+                    setStatus('Resulting split segment must be at least 5 minutes long.');
+                    return;
+                }
+                const originalEnd = containingSeg.end;
+                containingSeg.end = point;
+
+                const newSeg = {
+                    id: generateId(),
+                    start: point,
+                    end: originalEnd,
+                    label: `${containingSeg.label} (Part 2)`,
+                    category: containingSeg.category
+                };
+                segments.push(newSeg);
+                selectedBlockId = newSeg.id;
+                commitState(`Split "${containingSeg.label}" at ${minsToTime(point)}`);
+                return;
+            }
+
+            // Otherwise, check if it falls inside an unallocated gap -> carve a new block from gap start to point (or point to gap end)
+            const fullMap = buildFullPartitionMap();
+            const unallocGap = fullMap.find(b => b.isUnallocated && point > b.start && point < b.end);
+            if (unallocGap) {
+                const newSeg = {
+                    id: generateId(),
+                    start: unallocGap.start,
+                    end: point,
+                    label: 'New Time Block',
+                    category: 'focus'
+                };
+                segments.push(newSeg);
+                selectedBlockId = newSeg.id;
+                commitState(`Created new segment ${minsToTime(newSeg.start)}–${minsToTime(newSeg.end)} at split point`);
+                return;
+            }
+
+            setStatus(`A boundary already exists at ${minsToTime(point)}.`);
+        }
+
+        function splitSelectedAtMidpoint() {
+            const seg = segments.find(s => s.id === selectedBlockId);
+            if (!seg) return;
+            const mid = snapValue((seg.start + seg.end) / 2);
+            if (mid <= seg.start || mid >= seg.end) {
+                setStatus('Block is too short to split at current snap interval.');
+                return;
+            }
+            insertTimePoint(mid);
+        }
+
+        function insertPointFromInput() {
+            const timeVal = document.getElementById('quickPointTime').value;
+            if (!timeVal) return;
+            insertTimePoint(timeToMins(timeVal));
+        }
+
+        // =========================================================================
+        // DELETE & MERGE OPERATIONS
+        // =========================================================================
+
+        function deleteSelected() {
+            const idx = segments.findIndex(s => s.id === selectedBlockId);
+            if (idx === -1) return;
+            const removed = segments[idx];
+            segments.splice(idx, 1);
+            selectedBlockId = null;
+            commitState(`Deleted "${removed.label}" (${minsToTime(removed.start)}–${minsToTime(removed.end)}) -> unallocated`);
+        }
+
+        function mergeWithNext() {
+            const fullMap = buildFullPartitionMap();
+            const idx = fullMap.findIndex(b => b.id === selectedBlockId);
+            if (idx === -1 || idx >= fullMap.length - 1) return;
+
+            const curr = fullMap[idx];
+            const next = fullMap[idx + 1];
+            if (curr.isUnallocated || next.isUnallocated) return;
+
+            const segCurr = segments.find(s => s.id === curr.id);
+            const segNextIdx = segments.findIndex(s => s.id === next.id);
+            if (!segCurr || segNextIdx === -1) return;
+
+            const mergedLabel = `${segCurr.label} + ${next.label}`;
+            segCurr.end = next.end;
+            segments.splice(segNextIdx, 1);
+            selectedBlockId = segCurr.id;
+            commitState(`Merged adjacent blocks into "${mergedLabel}"`);
+        }
+
+        function clearAllPartitions() {
+            segments = [];
+            selectedBlockId = null;
+            commitState('Wiped partition table (24h unallocated)');
+        }
+
+        // =========================================================================
+        // GPARTED CREATE / EDIT PARTITION MODAL
+        // =========================================================================
+
+        function openNewDialog(unallocBlock = null) {
+            const fullMap = buildFullPartitionMap();
+            let targetGap = unallocBlock;
+
+            if (!targetGap) {
+                // Use currently selected if unallocated, otherwise pick largest unallocated gap
+                const sel = fullMap.find(b => b.id === selectedBlockId && b.isUnallocated);
+                if (sel) {
+                    targetGap = sel;
+                } else {
+                    const gaps = fullMap.filter(b => b.isUnallocated);
+                    if (gaps.length === 0) {
+                        setStatus('No unallocated space available. Delete or resize a block first.');
+                        return;
+                    }
+                    targetGap = gaps.reduce((max, g) => (g.duration > max.duration ? g : max), gaps[0]);
+                }
+            }
+
+            modalContext = {
+                mode: 'new',
+                targetId: null,
+                minBound: targetGap.start,
+                maxBound: targetGap.end
+            };
+
+            // Default to filling up to 60 mins or full gap if smaller
+            const defaultDur = Math.min(60, targetGap.duration);
+            const defaultStart = targetGap.start;
+            const defaultEnd = defaultStart + defaultDur;
+
+            document.getElementById('modalTitle').textContent = 'Create New Time Partition';
+            document.getElementById('modalIcon').className = 'fa-solid fa-file-circle-plus text-emerald-400';
+            document.getElementById('modalSubmitBtn').textContent = 'Add Partition';
+            document.getElementById('modalBoundsLabel').textContent = `${minsToTime(targetGap.start)} – ${minsToTime(targetGap.end)} (${formatDuration(targetGap.duration)} free)`;
+
+            document.getElementById('inputStartTime').value = minsToTime(defaultStart);
+            document.getElementById('inputEndTime').value = minsToTime(defaultEnd);
+            document.getElementById('inputLabel').value = '';
+            document.getElementById('inputCategory').value = 'focus';
+            document.getElementById('modalValidationMsg').classList.add('hidden');
+
+            syncModalFieldsFromTimes();
+            document.getElementById('partitionModal').classList.remove('hidden');
+            document.getElementById('inputLabel').focus();
+        }
+
+        function openEditDialog(block = null) {
+            const target = block || segments.find(s => s.id === selectedBlockId);
+            if (!target || target.isUnallocated) return;
+
+            // Find surrounding neighbors to determine available resize bounds
+            const sorted = [...segments].sort((a, b) => a.start - b.start);
+            const idx = sorted.findIndex(s => s.id === target.id);
+            const minBound = idx > 0 ? sorted[idx - 1].end : windowStart;
+            const maxBound = idx < sorted.length - 1 ? sorted[idx + 1].start : windowEnd;
+
+            modalContext = {
+                mode: 'edit',
+                targetId: target.id,
+                minBound,
+                maxBound
+            };
+
+            document.getElementById('modalTitle').textContent = `Resize / Move / Label (${target.deviceName || 'Segment'})`;
+            document.getElementById('modalIcon').className = 'fa-solid fa-sliders text-amber-400';
+            document.getElementById('modalSubmitBtn').textContent = 'Apply Changes';
+            document.getElementById('modalBoundsLabel').textContent = `${minsToTime(minBound)} – ${minsToTime(maxBound)} (Max available span)`;
+
+            document.getElementById('inputStartTime').value = minsToTime(target.start);
+            document.getElementById('inputEndTime').value = minsToTime(target.end);
+            document.getElementById('inputLabel').value = target.label;
+            document.getElementById('inputCategory').value = target.category;
+            document.getElementById('modalValidationMsg').classList.add('hidden');
+
+            syncModalFieldsFromTimes();
+            document.getElementById('partitionModal').classList.remove('hidden');
+        }
+
+        function closePartitionModal() {
+            document.getElementById('partitionModal').classList.add('hidden');
+            modalContext = null;
+        }
+
+        function syncModalFieldsFromTimes() {
+            if (!modalContext) return;
+            const start = timeToMins(document.getElementById('inputStartTime').value);
+            const end = timeToMins(document.getElementById('inputEndTime').value);
+            const { minBound, maxBound } = modalContext;
+
+            const freeBefore = Math.max(0, start - minBound);
+            const duration = Math.max(0, end - start);
+            const freeAfter = Math.max(0, maxBound - end);
+            const totalSpan = Math.max(1, maxBound - minBound);
+
+            document.getElementById('inputFreeBefore').value = freeBefore;
+            document.getElementById('inputDurationMins').value = duration;
+            document.getElementById('modalDurationLabel').textContent = formatDuration(duration);
+
+            // Update Mini GParted Visual Bar inside modal
+            const catKey = document.getElementById('inputCategory').value || 'focus';
+            const cat = CATEGORIES[catKey] || CATEGORIES.focus;
+            const labelVal = document.getElementById('inputLabel').value.trim() || cat.short;
+
+            const beforeEl = document.getElementById('miniFreeBefore');
+            const allocEl = document.getElementById('miniAllocated');
+            const afterEl = document.getElementById('miniFreeAfter');
+
+            beforeEl.style.width = `${(freeBefore / totalSpan) * 100}%`;
+            allocEl.style.width = `${(duration / totalSpan) * 100}%`;
+            afterEl.style.width = `${(freeAfter / totalSpan) * 100}%`;
+
+            allocEl.style.backgroundColor = cat.bg;
+            allocEl.style.borderColor = cat.border;
+            allocEl.style.color = cat.text;
+            allocEl.textContent = labelVal;
+        }
+
+        function syncModalTimesFromSpinners() {
+            if (!modalContext) return;
+            const { minBound, maxBound } = modalContext;
+            let freeBefore = Math.max(0, parseInt(document.getElementById('inputFreeBefore').value) || 0);
+            let duration = Math.max(5, parseInt(document.getElementById('inputDurationMins').value) || 15);
+
+            if (minBound + freeBefore + duration > maxBound) {
+                duration = Math.max(5, maxBound - minBound - freeBefore);
+            }
+
+            const newStart = minBound + freeBefore;
+            const newEnd = Math.min(maxBound, newStart + duration);
+
+            document.getElementById('inputStartTime').value = minsToTime(newStart);
+            document.getElementById('inputEndTime').value = minsToTime(newEnd);
+            syncModalFieldsFromTimes();
+        }
+
+        function savePartitionModal() {
+            if (!modalContext) return;
+            const start = timeToMins(document.getElementById('inputStartTime').value);
+            const end = timeToMins(document.getElementById('inputEndTime').value);
+            const category = document.getElementById('inputCategory').value;
+            const cat = CATEGORIES[category] || CATEGORIES.focus;
+            const label = document.getElementById('inputLabel').value.trim() || cat.short;
+            const errBox = document.getElementById('modalValidationMsg');
+
+            if (end <= start) {
+                errBox.textContent = 'End Time (Out) must be strictly later than Start Time (In).';
+                errBox.classList.remove('hidden');
+                return;
+            }
+            if (start < modalContext.minBound || end > modalContext.maxBound) {
+                errBox.textContent = `Time range must stay within available container bounds (${minsToTime(modalContext.minBound)} – ${minsToTime(modalContext.maxBound)}).`;
+                errBox.classList.remove('hidden');
+                return;
+            }
+
+            if (modalContext.mode === 'new') {
+                const newSeg = {
+                    id: generateId(),
+                    start,
+                    end,
+                    label,
+                    category
+                };
+                segments.push(newSeg);
+                selectedBlockId = newSeg.id;
+                closePartitionModal();
+                commitState(`Created partition "${label}" (${minsToTime(start)}–${minsToTime(end)})`);
+            } else {
+                const seg = segments.find(s => s.id === modalContext.targetId);
+                if (seg) {
+                    seg.start = start;
+                    seg.end = end;
+                    seg.label = label;
+                    seg.category = category;
+                }
+                closePartitionModal();
+                commitState(`Modified partition "${label}" (${minsToTime(start)}–${minsToTime(end)})`);
+            }
+        }
+
+        // =========================================================================
+        // EXPORT MODAL & CLIPBOARD
+        // =========================================================================
+
+        function openExportModal() {
+            document.getElementById('exportModal').classList.remove('hidden');
+            renderExportContent('markdown');
+        }
+
+        function closeExportModal() {
+            document.getElementById('exportModal').classList.add('hidden');
+        }
+
+        function renderExportContent(format) {
+            ['tabExportMd', 'tabExportCsv', 'tabExportJson'].forEach(id => {
+                document.getElementById(id).classList.remove('active');
+            });
+
+            const fullMap = buildFullPartitionMap();
+            const textarea = document.getElementById('exportTextarea');
+
+            if (format === 'markdown') {
+                document.getElementById('tabExportMd').classList.add('active');
+                let md = `| Partition | Label | Category | In (Start) | Out (End) | Duration |\n`;
+                md += `| :--- | :--- | :--- | :---: | :---: | :---: |\n`;
+                fullMap.forEach(b => {
+                    const catName = b.isUnallocated ? 'unallocated' : (CATEGORIES[b.category]?.short || b.category);
+                    md += `| ${b.deviceName} | ${b.label} | ${catName} | ${minsToTime(b.start)} | ${minsToTime(b.end)} | ${formatDuration(b.duration)} |\n`;
+                });
+                textarea.value = md;
+            } else if (format === 'csv') {
+                document.getElementById('tabExportCsv').classList.add('active');
+                let csv = `Partition,Label,Category,In,Out,DurationMinutes\n`;
+                fullMap.forEach(b => {
+                    const catName = b.isUnallocated ? 'unallocated' : b.category;
+                    csv += `"${b.deviceName}","${b.label.replace(/"/g, '""')}","${catName}","${minsToTime(b.start)}","${minsToTime(b.end)}",${b.duration}\n`;
+                });
+                textarea.value = csv;
+            } else if (format === 'json') {
+                document.getElementById('tabExportJson').classList.add('active');
+                const payload = fullMap.map(b => ({
+                    partition: b.deviceName,
+                    label: b.label,
+                    category: b.isUnallocated ? 'unallocated' : b.category,
+                    in: minsToTime(b.start),
+                    out: minsToTime(b.end),
+                    durationMinutes: b.duration
+                }));
+                textarea.value = JSON.stringify(payload, null, 2);
+            }
+        }
+
+        function copyExportText() {
+            const textarea = document.getElementById('exportTextarea');
+            textarea.select();
+            document.execCommand('copy');
+            const confirm = document.getElementById('copyConfirmText');
+            confirm.classList.remove('opacity-0');
+            setTimeout(() => confirm.classList.add('opacity-0'), 2000);
+        }
+
+        // =========================================================================
+        // SAMPLE DAY PRESET & INITIALIZATION
+        // =========================================================================
+
+        function loadSampleDay() {
+            segments = [
+                { id: generateId(), start: 0, end: 420, label: 'Sleep & Recovery', category: 'rest' },          // 00:00 - 07:00
+                { id: generateId(), start: 420, end: 510, label: 'Morning Routine & Breakfast', category: 'routine' }, // 07:00 - 08:30
+                { id: generateId(), start: 540, end: 720, label: 'Deep Work: Core Architecture', category: 'focus' },   // 09:00 - 12:00 (30m unalloc gap before!)
+                { id: generateId(), start: 720, end: 780, label: 'Lunch & Walk', category: 'break' },           // 12:00 - 13:00
+                { id: generateId(), start: 780, end: 900, label: 'Engineering Sync & Reviews', category: 'meeting' }, // 13:00 - 15:00
+                { id: generateId(), start: 960, end: 1080, label: 'Deep Work: Feature Sprint', category: 'focus' }, // 16:00 - 18:00 (60m unalloc gap before!)
+                { id: generateId(), start: 1140, end: 1320, label: 'Dinner, Gym & Reading', category: 'personal' } // 19:00 - 22:00
+            ];
+            selectedBlockId = segments[2].id;
+            undoStack = [];
+            redoStack = [];
+            operationLog = [{
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                desc: 'Loaded sample daily partition table (/dev/day0)'
+            }];
+            setStatus('Loaded sample daily schedule with unallocated gaps.');
+            renderAll();
+        }
+
+        function toggleOperationsDrawer() {
+            const drawer = document.getElementById('operationsDrawer');
+            const chevron = document.getElementById('drawerChevron');
+            drawer.classList.toggle('hidden');
+            chevron.classList.toggle('rotate-90');
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/[&<>"']/g, (m) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[m]));
+        }
+
+        function initUI() {
+            // Populate Category Legend & Modal Select
+            const legend = document.getElementById('categoryLegend');
+            const catSelect = document.getElementById('inputCategory');
+
+            Object.entries(CATEGORIES).forEach(([key, cat]) => {
+                // Legend item
+                const item = document.createElement('div');
+                item.className = 'flex items-center gap-1.5 text-[11px] text-gray-700';
+                item.innerHTML = `
+                    <span class="w-3 h-3 rounded-sm border-2 inline-block" style="background-color:${cat.bg}; border-color:${cat.border};"></span>
+                    <span>${cat.short}</span>
+                `;
+                legend.appendChild(item);
+
+                // Select option
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = cat.name;
+                catSelect.appendChild(opt);
+            });
+
+            // Partition Bar Mouse Hover & Split Click Handlers
+            const bar = document.getElementById('partitionBar');
+            const cursorLine = document.getElementById('splitCursorLine');
+            const cursorBadge = document.getElementById('splitCursorBadge');
+            const hoverReadout = document.getElementById('hoverTimeReadout');
+
+            bar.addEventListener('mousemove', (e) => {
+                const rect = bar.getBoundingClientRect();
+                const relX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+                const rawMins = windowStart + (relX / rect.width) * (windowEnd - windowStart);
+                const snapped = snapValue(rawMins);
+
+                hoverReadout.textContent = `Cursor: ${minsToTime(snapped)}`;
+
+                if (isSplitMode) {
+                    const pct = ((snapped - windowStart) / (windowEnd - windowStart)) * 100;
+                    cursorLine.style.left = `${pct}%`;
+                    cursorBadge.textContent = `Split @ ${minsToTime(snapped)}`;
+                    cursorLine.classList.remove('hidden');
+                }
+            });
+
+            bar.addEventListener('mouseleave', () => {
+                hoverReadout.textContent = 'Cursor: --:--';
+                cursorLine.classList.add('hidden');
+            });
+
+            bar.addEventListener('click', (e) => {
+                if (!isSplitMode) return;
+                const rect = bar.getBoundingClientRect();
+                const relX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+                const rawMins = windowStart + (relX / rect.width) * (windowEnd - windowStart);
+                insertTimePoint(rawMins);
+                toggleSplitMode(false);
+            });
+
+            // Day Window Selector
+            document.getElementById('dayWindowSelect').addEventListener('change', (e) => {
+                const [s, end] = e.target.value.split('-').map(Number);
+                windowStart = s;
+                windowEnd = end;
+                renderAll();
+            });
+
+            // Snap Selector
+            document.getElementById('snapSelect').addEventListener('change', (e) => {
+                snapMinutes = parseInt(e.target.value, 10) || 15;
+                setStatus(`Snap alignment set to ${snapMinutes} minutes.`);
+            });
+
+            // Modal live input listeners
+            ['inputStartTime', 'inputEndTime', 'inputLabel', 'inputCategory'].forEach(id => {
+                document.getElementById(id).addEventListener('input', syncModalFieldsFromTimes);
+            });
+            ['inputFreeBefore', 'inputDurationMins'].forEach(id => {
+                document.getElementById(id).addEventListener('input', syncModalTimesFromSpinners);
+            });
+
+            // Keyboard Shortcuts (Ctrl+Z, Ctrl+Y, Delete, Escape)
+            window.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    undo();
+                } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+                    e.preventDefault();
+                    redo();
+                } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                    e.preventDefault();
+                    deleteSelected();
+                } else if (e.key === 'Escape') {
+                    toggleSplitMode(false);
+                    closePartitionModal();
+                    closeExportModal();
+                }
+            });
+
+            // Live Clock Update
+            const updateClock = () => {
+                const now = new Date();
+                document.getElementById('liveClock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            };
+            updateClock();
+            setInterval(updateClock, 15000);
+
+            // Load initial sample schedule
+            loadSampleDay();
+        }
+
+        window.onload = initUI;
+    </script>
+</body>
+</html>
